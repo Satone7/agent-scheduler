@@ -60,3 +60,23 @@ class AgentTask:
     payload: Dict[str, Any] = field(default_factory=dict)
     result: Optional[Any] = None
     error: Optional[str] = None
+
+from pydantic import BaseModel, Field
+from typing import List
+
+class WorkflowState(BaseModel):
+    """
+    Tracks the state of a Workflow.
+    """
+    current_stage: str = Field(default="init", description="The current stage of the workflow")
+    completed_stages: List[str] = Field(default_factory=list, description="List of completed stages")
+    shared_memory: Dict[str, Any] = Field(default_factory=dict, description="Shared memory for the workflow")
+
+class AgentStateUpdate(BaseModel):
+    """
+    Represents an update request from the main Agent to modify the workflow state.
+    """
+    action: str = Field(..., description="The action performed or requested by the agent")
+    next_stage: Optional[str] = Field(None, description="The next stage to transition to, if any")
+    updates_to_memory: Dict[str, Any] = Field(default_factory=dict, description="Updates to apply to the shared memory")
+

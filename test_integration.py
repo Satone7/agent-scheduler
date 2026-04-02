@@ -103,3 +103,89 @@ def test_end_to_end_failure_rollback_flow(mock_run):
     assert "claude" in calls[0][0][0]
     assert calls[1][0][0] == ["git", "reset", "--hard", "HEAD"]
     assert calls[2][0][0] == ["git", "clean", "-fd"]
+
+def test_end_to_end_workflow_validation_success():
+    """
+    验证主 Agent 提交合法状态更新，SchedulerEngine 能够正确更新 workflow_state。
+    """
+    from workflow_validator import WorkflowValidator
+    from models import AgentStateUpdate
+
+    validator = WorkflowValidator("sample_workflow.yaml")
+    scheduler = SchedulerEngine(workflow_validator=validator)
+    main_agent = MainAgent(scheduler, default_save_path="/workspace")
+    
+    # 设置初始状态为 plan
+    scheduler.workflow_state.current_stage = "plan"
+    scheduler.start()
+
+    # 模拟主 Agent 生成了合法的状态更新 (流转到 draft，必须提供 draft_content)
+    with patch.object(main_agent, '_generate_state_update') as mock_update:
+        mock_update.return_value = AgentStateUpdate(
+            action="drafting",
+            next_stage="draft",
+            updates_to_memory={"draft_content": "This is a draft."}
+        )
+        
+        # 触发主 Agent (绕过 trigger_main_agent_wakeup 以便直接抛出/捕获异常，或者验证无异常抛出)
+        main_agent.wakeup("write draft", [])
+        
+    # 验证状态已正确更新
+    assert scheduler.workflow_state.current_stage == "draft"
+    assert scheduler.workflow_state.shared_memory.get("draft_content") == "This is a draft."
+    assert "plan" in scheduler.workflow_state.completed_stages
+
+def test_end_to_end_workflow_validation_failure():
+    """
+    验证主 Agent 提交不合法的状态更新（跳转到不存在的阶段或缺少必填字段），能够抛出预期异常。
+    """
+    from workflow_validator import (
+        WorkflowValidator, 
+        MissingRequiredMemoryError, 
+        InvalidTransitionError,
+        PhaseNotFoundError
+    )
+    from models import AgentStateUpdate
+
+    validator = WorkflowValidator("sample_workflow.yaml")
+    scheduler = SchedulerEngine(workflow_validator=validator)
+    main_agent = MainAgent(scheduler, default_save_path="/workspace")
+    
+    scheduler.workflow_state.current_stage = "plan"
+    scheduler.start()
+
+    # 1. 验证缺少必填字段异常
+    with patch.object(main_agent, '_generate_state_update') as mock_update:
+        mock_update.return_value = AgentStateUpdate(
+            action="drafting",
+            next_stage="draft",
+            updates_to_memory={}  # 缺少 draft_content
+        )
+        
+        with pytest.raises(MissingRequiredMemoryError) as exc_info:
+            main_agent.wakeup("write draft", [])
+        assert "缺少必填字段" in str(exc_info.value)
+
+    # 2. 验证非法流转异常 (plan -> publish)
+    with patch.object(main_agent, '_generate_state_update') as mock_update:
+        mock_update.return_value = AgentStateUpdate(
+            action="publishing",
+            next_stage="publish",
+            updates_to_memory={"final_content": "Final!"}
+        )
+        
+        with pytest.raises(InvalidTransitionError) as exc_info:
+            main_agent.wakeup("publish article", [])
+        assert "不允许从阶段" in str(exc_info.value)
+
+    # 3. 验证跳转到不存在的阶段异常
+    with patch.object(main_agent, '_generate_state_update') as mock_update:
+        mock_update.return_value = AgentStateUpdate(
+            action="unknown_action",
+            next_stage="unknown_phase",
+            updates_to_memory={}
+        )
+        
+        with pytest.raises(PhaseNotFoundError) as exc_info:
+            main_agent.wakeup("do unknown", [])
+        assert "在工作流定义中不存在" in str(exc_info.value)

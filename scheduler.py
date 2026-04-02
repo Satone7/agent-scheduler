@@ -1,6 +1,6 @@
 import logging
 from typing import List, Optional, Callable, Dict, Any
-from models import AgentTask, SchedulerConfig, SchedulerState, SchedulerStatus, TaskStatus
+from models import AgentTask, SchedulerConfig, SchedulerState, SchedulerStatus, TaskStatus, WorkflowState, AgentStateUpdate
 
 logger = logging.getLogger(__name__)
 
@@ -8,13 +8,16 @@ class SchedulerEngine:
     """
     核心调度器引擎
     """
-    def __init__(self):
+    def __init__(self, workflow_validator: Optional[Any] = None):
         self.config_registry: Dict[str, SchedulerConfig] = {}
         self.default_config: Optional[SchedulerConfig] = None
         self.state = SchedulerState()
         self.sub_agent_tasks: List[AgentTask] = []
         self.next_wakeup_prompt: Optional[str] = None
         self._is_running = False
+        
+        self.workflow_state = WorkflowState()
+        self.workflow_validator = workflow_validator
 
     def register_config(self, name: str, config: SchedulerConfig, set_as_default: bool = False):
         """
@@ -101,3 +104,38 @@ class SchedulerEngine:
     @property
     def is_running(self) -> bool:
         return self._is_running
+
+    def update_workflow_state(self, update_request: AgentStateUpdate):
+        """
+        处理主 Agent 提交的状态更新。
+        首先使用 Validator 进行合法性校验，通过后更新托管的 WorkflowState。
+        """
+        if self.workflow_validator:
+            import workflow_validator as wv
+            # Validator 需要目标阶段。如果未提供 next_stage，我们将其视作停留在当前阶段
+            target_phase = update_request.next_stage or self.workflow_state.current_stage
+            
+            val_state = wv.WorkflowState(
+                current_phase=self.workflow_state.current_stage,
+                memory=self.workflow_state.shared_memory
+            )
+            val_update = wv.AgentStateUpdate(
+                target_phase=target_phase,
+                updates_to_memory=update_request.updates_to_memory
+            )
+            
+            # 进行合法性校验，如果校验失败会抛出异常
+            self.workflow_validator.validate(val_state, val_update)
+
+        # 校验通过（或没有配置 Validator），更新托管的 WorkflowState
+        if update_request.next_stage and update_request.next_stage != self.workflow_state.current_stage:
+            # 记录 completed_stages
+            self.workflow_state.completed_stages.append(self.workflow_state.current_stage)
+            # 修改 current_stage
+            self.workflow_state.current_stage = update_request.next_stage
+            
+        # 合并 shared_memory
+        if update_request.updates_to_memory:
+            self.workflow_state.shared_memory.update(update_request.updates_to_memory)
+            
+        logger.info(f"Workflow state updated. Current stage: {self.workflow_state.current_stage}")

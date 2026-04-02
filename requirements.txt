@@ -1,2 +1,1 @@
-# Core dependencies
-# (No third-party dependencies required for dataclasses, but this file is standard for Python projects)
+PyYAML>=6.0

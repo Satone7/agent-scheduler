@@ -1,0 +1,32 @@
+name: "ArticleWritingSkill"
+description: "A workflow for writing an article."
+version: "1.0"
+phases:
+  plan:
+    description: "Plan the article structure based on the topic."
+    next_phases:
+      - draft
+    required_memory:
+      - topic
+      - outline
+  
+  draft:
+    description: "Write the first draft of the article."
+    next_phases:
+      - review
+    required_memory:
+      - draft_content
+  
+  review:
+    description: "Review and refine the draft."
+    next_phases:
+      - publish
+      - draft
+    required_memory:
+      - feedback
+  
+  publish:
+    description: "Publish the final article."
+    next_phases: []
+    required_memory:
+      - final_content

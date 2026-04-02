@@ -1,6 +1,17 @@
 import unittest
-from models import AgentTask, SchedulerConfig, SchedulerStatus, TaskStatus
+from models import AgentTask, SchedulerConfig, SchedulerStatus, TaskStatus, AgentStateUpdate
 from scheduler import SchedulerEngine
+
+class MockValidator:
+    def __init__(self, should_fail=False):
+        self.should_fail = should_fail
+        self.validated = False
+        
+    def validate(self, current_state, update):
+        self.validated = True
+        if self.should_fail:
+            raise ValueError("Validation failed")
+        return True
 
 class TestSchedulerEngine(unittest.TestCase):
     def setUp(self):
@@ -74,6 +85,55 @@ class TestSchedulerEngine(unittest.TestCase):
         self.scheduler.stop()
         self.assertFalse(self.scheduler.is_running)
         self.assertEqual(self.scheduler.state.status, SchedulerStatus.STOPPED)
+
+    def test_update_workflow_state_no_validator(self):
+        update = AgentStateUpdate(
+            action="init",
+            next_stage="planning",
+            updates_to_memory={"key": "value"}
+        )
+        self.scheduler.update_workflow_state(update)
+        self.assertEqual(self.scheduler.workflow_state.current_stage, "planning")
+        self.assertEqual(self.scheduler.workflow_state.shared_memory, {"key": "value"})
+        self.assertEqual(self.scheduler.workflow_state.completed_stages, ["init"])
+
+    def test_update_workflow_state_with_validator_success(self):
+        validator = MockValidator()
+        self.scheduler.workflow_validator = validator
+        
+        update = AgentStateUpdate(
+            action="plan",
+            next_stage="coding",
+            updates_to_memory={"plan": "details"}
+        )
+        
+        self.scheduler.workflow_state.current_stage = "planning"
+        self.scheduler.update_workflow_state(update)
+        
+        self.assertTrue(validator.validated)
+        self.assertEqual(self.scheduler.workflow_state.current_stage, "coding")
+        self.assertEqual(self.scheduler.workflow_state.shared_memory, {"plan": "details"})
+        self.assertEqual(self.scheduler.workflow_state.completed_stages, ["planning"])
+
+    def test_update_workflow_state_with_validator_fail(self):
+        validator = MockValidator(should_fail=True)
+        self.scheduler.workflow_validator = validator
+        
+        update = AgentStateUpdate(
+            action="plan",
+            next_stage="coding",
+            updates_to_memory={"plan": "details"}
+        )
+        
+        self.scheduler.workflow_state.current_stage = "planning"
+        
+        with self.assertRaises(ValueError):
+            self.scheduler.update_workflow_state(update)
+            
+        # State should not be updated
+        self.assertEqual(self.scheduler.workflow_state.current_stage, "planning")
+        self.assertEqual(self.scheduler.workflow_state.shared_memory, {})
+        self.assertEqual(self.scheduler.workflow_state.completed_stages, [])
 
 if __name__ == '__main__':
     unittest.main()
