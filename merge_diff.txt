@@ -1,0 +1,1553 @@
+diff --git a/.trae/specs/init-agent-scheduler/checklist.md b/.trae/specs/init-agent-scheduler/checklist.md
+new file mode 100644
+index 0000000..76039be
+--- /dev/null
++++ b/.trae/specs/init-agent-scheduler/checklist.md
+@@ -0,0 +1,6 @@
++- [x] 核心数据结构（任务配置、调度器状态等）定义与实现完成
++- [x] 调度器引擎成功实现对主 Agent 提示词及子 Agent 任务配置的注册与读取
++- [x] 主 Agent 能够每次清空上下文，并成功加载前置配置的提示词和默认规则启动
++- [x] 能够成功通过 `claude --worktree` 指令在隔离环境中启动子 Agent 并传递参数
++- [x] 子 Agent 执行失败时，关联的 worktree 能够被成功废弃清理且不污染主环境
++- [x] 在子 Agent 任务结束或执行时间耗尽时，调度器能够成功唤起下一次主 Agent
+diff --git a/.trae/specs/init-agent-scheduler/spec.md b/.trae/specs/init-agent-scheduler/spec.md
+new file mode 100644
+index 0000000..da8c9fb
+--- /dev/null
++++ b/.trae/specs/init-agent-scheduler/spec.md
+@@ -0,0 +1,33 @@
++# Agent Scheduler Spec
++
++## Why
++用户需要一个基于动态配置的 Agent 调度器系统，用于管理复杂任务的执行流程。通过主 Agent 和子 Agent 的分离，以及基于独立上下文和 worktree 的隔离机制，可以实现更稳定、可回溯和灵活的任务调度与容错重试机制，防止执行环境被意外破坏。
++
++## What Changes
++- 设计并实现一个核心调度器引擎，负责接收和执行动态配置。
++- 实现主 Agent（流程把控者）的生命周期管理：
++  - 每次启动时清空上下文。
++  - 初始化时加载上一次主 Agent 设置的提示词以及调度器的默认规则和必要文件保存路径。
++  - 选择合适的 SKILL，根据需求制定子 Agent 的任务属性（提示词、模型、执行时间等）并注册到调度器。
++  - 制定下一次唤起自身的提示词并注册到调度器，随后主动退出。
++- 实现子 Agent（任务执行者）的隔离执行：
++  - 通过 `claude --worktree` 的方式启动，执行主 Agent 布置的具体任务。
++  - 任务失败时，调度器能够废弃当前子 Agent 的变更记录，重新执行或流转。
++- 确保在子 Agent 任务结束或执行时间耗尽时，准确唤起主 Agent。
++
++## Impact
++- Affected specs: 调度器核心控制流、Agent 无状态生命周期管理、Worktree 任务隔离机制。
++- Affected code: 将从零构建整个项目架构，核心模块包括：`scheduler`（调度器引擎）、`agent_manager`（主/子 Agent 封装）、`config`（配置和规则注入）、`worktree_runner`（执行环境隔离）等。
++
++## ADDED Requirements
++### Requirement: 主 Agent 的无状态化执行机制
++系统必须支持主 Agent 每次基于纯净上下文启动并动态生成后续配置。
++#### Scenario: 主 Agent 下发任务并退出
++- **WHEN** 用户输入初始需求，或子 Agent 任务完成/超时触发下一次主 Agent 唤醒时
++- **THEN** 调度器清空主 Agent 的上下文并以默认规则和前置提示词启动；主 Agent 制定出子 Agent 配置（含模型、时间等）及下次主 Agent 的唤醒提示词，全部注册到调度器后退出。
++
++### Requirement: 子 Agent 隔离与容错机制
++系统必须确保子 Agent 的所有执行过程被隔离，并在失败时能自动清理。
++#### Scenario: 子 Agent 任务执行失败
++- **WHEN** 子 Agent 在 `claude --worktree` 环境下执行任务失败
++- **THEN** 调度器直接丢弃该 worktree 产生的全部变更，不对主干产生任何影响，并且可以选择重新执行或重新唤醒主 Agent 处置异常。
+diff --git a/.trae/specs/init-agent-scheduler/tasks.md b/.trae/specs/init-agent-scheduler/tasks.md
+new file mode 100644
+index 0000000..6f10430
+--- /dev/null
++++ b/.trae/specs/init-agent-scheduler/tasks.md
+@@ -0,0 +1,22 @@
++# Tasks
++- [x] Task 1: 初始化项目结构和领域模型设计
++  - [x] SubTask 1.1: 定义调度器配置、状态存储结构（SchedulerConfig, SchedulerState）。
++  - [x] SubTask 1.2: 定义主 Agent 提示词载体、子 Agent 任务描述（AgentTask）等核心数据模型。
++- [x] Task 2: 实现核心调度器引擎 (Scheduler Engine)
++  - [x] SubTask 2.1: 实现配置注册表（接收主 Agent 生成的子 Agent 配置和下次唤醒提示词）。
++  - [x] SubTask 2.2: 实现主 Agent 的唤醒触发机制与退出逻辑。
++- [x] Task 3: 实现 Worktree 执行环境封装 (Worktree Runner)
++  - [x] SubTask 3.1: 封装命令行接口，支持以 `claude --worktree` 方式启动子 Agent 并传递任务参数。
++  - [x] SubTask 3.2: 实现子 Agent 执行监控、超时控制及执行失败后的变更废弃清理逻辑。
++- [x] Task 4: 实现主 Agent 上下文管理及规则注入
++  - [x] SubTask 4.1: 实现每次唤醒主 Agent 时的上下文环境重置和前置提示词注入。
++  - [x] SubTask 4.2: 将调度器默认规则、文件保存路径等系统级参数整合注入给主 Agent。
++- [x] Task 5: 系统集成测试与容错验证
++  - [x] SubTask 5.1: 编写核心控制流的端到端测试（主 Agent 启动 -> 下发任务 -> 子 Agent 执行 -> 主 Agent 再次唤醒）。
++  - [x] SubTask 5.2: 针对子 Agent 失败场景，验证隔离环境的变更丢弃和重试机制是否生效。
++
++# Task Dependencies
++- Task 2 depends on Task 1
++- Task 3 depends on Task 1
++- Task 4 depends on Task 2
++- Task 5 depends on Task 2, Task 3, Task 4
+diff --git a/README.md b/README.md
+new file mode 100644
+index 0000000..5cd6ed3
+--- /dev/null
++++ b/README.md
+@@ -0,0 +1,136 @@
++# Agent Scheduler 框架
++
++Agent Scheduler 是一个用于编排和调度自治 Agent（智能体）的轻量级 Python 框架。它通过主从 Agent 架构（Main/Sub Agent）、严格的 YAML 工作流校验以及基于 Git 的安全执行沙箱，帮助开发者构建复杂、可靠的多步骤自动化流程。
++
++## 🌟 核心特性
++
++- **基于 YAML 的工作流定义**：通过简单的 YAML 文件定义状态机（Phases）、流转规则（Transitions）以及依赖的上下文数据（Required Memory）。
++- **主/子 Agent 协同调度**：主 Agent 负责拆解任务、管理上下文和决策状态流转；调度引擎将子任务分配给 Worktree Runner 执行。
++- **安全的沙箱执行机制**：`WorktreeRunner` 支持执行超时控制。如果子任务执行失败或崩溃，框架会自动使用 `git reset --hard` 和 `git clean -fd` 恢复工作区环境，防止意外破坏代码库。
++- **严格的状态校验**：`WorkflowValidator` 会在每次状态流转前拦截非法操作，确保必填上下文（Memory）完备以及流转路径合法。
++
++## 🚀 快速开始
++
++### 1. 环境准备
++
++确保您的环境中已安装所需的依赖：
++
++```bash
++pip install -r requirements.txt
++```
++
++### 2. 基础使用示例
++
++以下是如何将调度引擎、验证器和主 Agent 组合使用的基本示例：
++
++```python
++from scheduler import SchedulerEngine
++from workflow_validator import WorkflowValidator
++from main_agent import MainAgent
++from worktree_runner import WorktreeRunner
++
++# 1. 加载工作流定义并初始化验证器
++validator = WorkflowValidator("sample_workflow.yaml")
++
++# 2. 初始化调度器引擎，并注入验证器
++scheduler = SchedulerEngine(workflow_validator=validator)
++scheduler.start()
++
++# 3. 初始化主 Agent，绑定调度器
++main_agent = MainAgent(scheduler=scheduler, default_save_path="/workspace")
++
++# 4. 触发主 Agent 唤醒并下发初始 Prompt
++scheduler.set_next_wakeup_prompt("初始化工作流并开始执行任务")
++scheduler.trigger_main_agent_wakeup(main_agent.wakeup)
++
++# 5. （可选）使用 WorktreeRunner 执行生成的子任务
++runner = WorktreeRunner()
++for task in scheduler.sub_agent_tasks:
++    runner.run_task(task, timeout_seconds=3600)
++```
++
++## 🛠️ 如何定义自己的工作流
++
++您可以完全通过 YAML 文件来定义自己的业务流程。工作流被拆分为多个**阶段 (Phases)**，每个阶段都可以配置其描述、允许的下一阶段以及必须具备的上下文记忆（Memory）。
++
++### 配置文件结构
++
++创建一个 YAML 文件（例如 `custom_workflow.yaml`），其核心结构如下：
++
++```yaml
++name: "YourWorkflowName"
++description: "工作流的整体描述"
++version: "1.0"
++phases:
++  # 阶段 1：初始化
++  init:
++    description: "初始化阶段，准备必要的数据"
++    next_phases:
++      - process  # 允许流转到的下一个阶段
++    required_memory: [] # 进入该阶段所需的上下文变量键名
++  
++  # 阶段 2：处理
++  process:
++    description: "核心处理阶段"
++    next_phases:
++      - review
++    required_memory:
++      - input_data  # 必须在上下文中包含 input_data 才能进入此阶段
++  
++  # 阶段 3：审核
++  review:
++    description: "审核结果"
++    next_phases:
++      - process  # 可以打回重新处理
++      - publish  # 也可以流转到发布
++    required_memory:
++      - processed_result
++```
++
++### 字段说明：
++- **`phases`**: 包含工作流所有可能阶段的字典。
++- **`description`**: 阶段的文字描述，可供大模型或开发者理解该阶段的目的。
++- **`next_phases`**: 一个列表，明确规定了**当前阶段只能流转到列表中的哪些阶段**。如果尝试流转到未定义的阶段，`WorkflowValidator` 将抛出 `InvalidTransitionError` 异常。
++- **`required_memory`**: 一个列表，声明了**要进入该阶段，共享内存（Shared Memory）中必须存在的字段**。这保证了前置任务已正确输出了必要的数据，避免流程出错。
++
++### 参考示例：文章撰写工作流
++您可以参考项目中的 `sample_workflow.yaml`，了解真实场景下的配置：
++
++```yaml
++name: "ArticleWritingSkill"
++version: "1.0"
++phases:
++  plan:
++    description: "Plan the article structure based on the topic."
++    next_phases: 
++      - draft
++    required_memory: 
++      - topic
++      - outline
++  draft:
++    description: "Write the first draft of the article."
++    next_phases: 
++      - review
++    required_memory: 
++      - draft_content
++  review:
++    description: "Review and refine the draft."
++    next_phases: 
++      - publish
++      - draft
++    required_memory: 
++      - feedback
++  publish:
++    description: "Publish the final article."
++    next_phases: []
++    required_memory: 
++      - final_content
++```
++
++## 🧩 核心组件架构说明
++
++- [**`SchedulerEngine`**](file:///workspace/scheduler.py)：整个框架的心脏。负责维护系统状态、管理全局配置、暂存子 Agent 任务队列，并处理状态更新。
++- [**`MainAgent`**](file:///workspace/main_agent.py)：相当于工作流的“大脑”。它在每次被唤醒时获取当前上下文，并决策：下一步该生成哪些子任务？工作流该流转到哪个阶段？
++- [**`WorktreeRunner`**](file:///workspace/worktree_runner.py)：负责在子进程中调用命令行（如 `claude --worktree`）执行具体任务。它内置了安全机制，遇到执行失败会通过 Git 命令回滚工作区。
++- [**`WorkflowValidator`**](file:///workspace/workflow_validator.py)：规则守护者。在主 Agent 提交状态更新时拦截请求，比对 YAML 规则，防止工作流陷入错误或死锁状态。
++- [**`Models`**](file:///workspace/models.py)：定义了所有核心的数据结构，如 `AgentTask`, `WorkflowState`, `AgentStateUpdate` 等。
+diff --git a/__init__.py b/__init__.py
+new file mode 100644
+index 0000000..d7da9da
+--- /dev/null
++++ b/__init__.py
+@@ -0,0 +1 @@
++# Empty init to mark this directory as a Python package.
+diff --git a/__pycache__/__init__.cpython-314.pyc b/__pycache__/__init__.cpython-314.pyc
+new file mode 100644
+index 0000000..4d4fc3d
+Binary files /dev/null and b/__pycache__/__init__.cpython-314.pyc differ
+diff --git a/__pycache__/main_agent.cpython-314.pyc b/__pycache__/main_agent.cpython-314.pyc
+new file mode 100644
+index 0000000..788b945
+Binary files /dev/null and b/__pycache__/main_agent.cpython-314.pyc differ
+diff --git a/__pycache__/models.cpython-314.pyc b/__pycache__/models.cpython-314.pyc
+new file mode 100644
+index 0000000..ca0506c
+Binary files /dev/null and b/__pycache__/models.cpython-314.pyc differ
+diff --git a/__pycache__/scheduler.cpython-314.pyc b/__pycache__/scheduler.cpython-314.pyc
+new file mode 100644
+index 0000000..cc5d82d
+Binary files /dev/null and b/__pycache__/scheduler.cpython-314.pyc differ
+diff --git a/__pycache__/test_integration.cpython-314-pytest-9.0.2.pyc b/__pycache__/test_integration.cpython-314-pytest-9.0.2.pyc
+new file mode 100644
+index 0000000..998b74c
+Binary files /dev/null and b/__pycache__/test_integration.cpython-314-pytest-9.0.2.pyc differ
+diff --git a/__pycache__/test_models.cpython-314-pytest-9.0.2.pyc b/__pycache__/test_models.cpython-314-pytest-9.0.2.pyc
+new file mode 100644
+index 0000000..6f7fe45
+Binary files /dev/null and b/__pycache__/test_models.cpython-314-pytest-9.0.2.pyc differ
+diff --git a/__pycache__/test_models.cpython-314.pyc b/__pycache__/test_models.cpython-314.pyc
+new file mode 100644
+index 0000000..edb0ccb
+Binary files /dev/null and b/__pycache__/test_models.cpython-314.pyc differ
+diff --git a/__pycache__/test_scheduler.cpython-314-pytest-9.0.2.pyc b/__pycache__/test_scheduler.cpython-314-pytest-9.0.2.pyc
+new file mode 100644
+index 0000000..b73d8e7
+Binary files /dev/null and b/__pycache__/test_scheduler.cpython-314-pytest-9.0.2.pyc differ
+diff --git a/__pycache__/test_scheduler.cpython-314.pyc b/__pycache__/test_scheduler.cpython-314.pyc
+new file mode 100644
+index 0000000..fbd32b2
+Binary files /dev/null and b/__pycache__/test_scheduler.cpython-314.pyc differ
+diff --git a/__pycache__/test_workflow_validator.cpython-314-pytest-9.0.2.pyc b/__pycache__/test_workflow_validator.cpython-314-pytest-9.0.2.pyc
+new file mode 100644
+index 0000000..bc3b213
+Binary files /dev/null and b/__pycache__/test_workflow_validator.cpython-314-pytest-9.0.2.pyc differ
+diff --git a/__pycache__/test_workflow_validator.cpython-314.pyc b/__pycache__/test_workflow_validator.cpython-314.pyc
+new file mode 100644
+index 0000000..95c4be9
+Binary files /dev/null and b/__pycache__/test_workflow_validator.cpython-314.pyc differ
+diff --git a/__pycache__/test_worktree_runner.cpython-314-pytest-9.0.2.pyc b/__pycache__/test_worktree_runner.cpython-314-pytest-9.0.2.pyc
+new file mode 100644
+index 0000000..5ffa455
+Binary files /dev/null and b/__pycache__/test_worktree_runner.cpython-314-pytest-9.0.2.pyc differ
+diff --git a/__pycache__/test_worktree_runner.cpython-314.pyc b/__pycache__/test_worktree_runner.cpython-314.pyc
+new file mode 100644
+index 0000000..1b30243
+Binary files /dev/null and b/__pycache__/test_worktree_runner.cpython-314.pyc differ
+diff --git a/__pycache__/workflow_validator.cpython-314.pyc b/__pycache__/workflow_validator.cpython-314.pyc
+new file mode 100644
+index 0000000..c9e3c9a
+Binary files /dev/null and b/__pycache__/workflow_validator.cpython-314.pyc differ
+diff --git a/__pycache__/worktree_runner.cpython-314.pyc b/__pycache__/worktree_runner.cpython-314.pyc
+new file mode 100644
+index 0000000..78865cd
+Binary files /dev/null and b/__pycache__/worktree_runner.cpython-314.pyc differ
+diff --git a/main_agent.py b/main_agent.py
+new file mode 100644
+index 0000000..31d9beb
+--- /dev/null
++++ b/main_agent.py
+@@ -0,0 +1,129 @@
++import logging
++import dataclasses
++from typing import List, Dict, Any, Optional
++from models import AgentTask, SchedulerConfig, AgentStateUpdate
++from scheduler import SchedulerEngine
++
++logger = logging.getLogger(__name__)
++
++class MainAgent:
++    """
++    主 Agent
++    负责上下文管理和规则注入，协调子任务生成与调度。
++    """
++    def __init__(self, scheduler: SchedulerEngine, default_save_path: str = "/workspace"):
++        self.scheduler = scheduler
++        self.default_save_path = default_save_path
++        self.context: Dict[str, Any] = {}
++        
++        # 默认调度器规则
++        self.default_rules = [
++            "1. Analyze the current environment and task requirements.",
++            "2. Break down complex tasks into manageable sub-agent tasks.",
++            "3. Ensure all generated tasks have clear descriptions and objectives.",
++            "4. Provide a comprehensive prompt for the next wakeup cycle."
++        ]
++
++    def _clear_context(self):
++        """清空之前的上下文"""
++        self.context.clear()
++        logger.debug("Main Agent context cleared.")
++
++    def _inject_rules_and_context(self, previous_prompt: str):
++        """注入默认调度器规则、文件保存路径及上一次配置的提示词，并注入当前流程所处的阶段及共享上下文"""
++        workflow_state = self.scheduler.workflow_state
++        self.context = {
++            "rules": self.default_rules,
++            "save_path": self.default_save_path,
++            "previous_prompt": previous_prompt,
++            "scheduler_config": dataclasses.asdict(self.scheduler.get_config()),
++            "workflow_stage": workflow_state.current_stage,
++            "shared_memory": workflow_state.shared_memory.copy()
++        }
++        logger.debug(f"Injected rules, save path: {self.default_save_path}, previous prompt. Current stage: {workflow_state.current_stage}")
++
++    def _generate_next_tasks(self, prompt: str, current_tasks: List[AgentTask]) -> List[AgentTask]:
++        """
++        根据输入输出生成下一步的配置(子任务)
++        此处为模拟逻辑，实际应用中会调用大模型生成任务
++        """
++        logger.info(f"Generating tasks based on prompt: '{prompt}'")
++        new_tasks = []
++        if "init" in prompt.lower():
++            new_tasks.append(AgentTask(name="Initial Setup", description="Perform initial setup tasks."))
++        elif "analyze" in prompt.lower():
++            new_tasks.append(AgentTask(name="Code Analysis", description="Analyze the current codebase."))
++        else:
++            new_tasks.append(AgentTask(name="Follow-up Action", description=f"Action derived from: {prompt}"))
++        
++        return new_tasks
++
++    def _generate_next_prompt(self, prompt: str, current_tasks: List[AgentTask]) -> str:
++        """
++        根据输入输出生成下一步的提示词
++        此处为模拟逻辑，实际应用中会调用大模型生成
++        """
++        return f"Continue processing after executing tasks derived from: '{prompt}'"
++
++    def _generate_state_update(self, prompt: str, current_tasks: List[AgentTask]) -> AgentStateUpdate:
++        """
++        根据输入输出生成状态流转指令
++        此处为模拟逻辑，实际应用中会调用大模型生成状态更新
++        """
++        logger.info("Generating state update based on current context and prompt.")
++        
++        action = "processed_prompt"
++        next_stage = None
++        updates_to_memory = {}
++
++        if "init" in prompt.lower():
++            next_stage = "analysis"
++            updates_to_memory["initialized"] = True
++        elif "analyze" in prompt.lower():
++            next_stage = "execution"
++            updates_to_memory["analyzed"] = True
++        elif "complete" in prompt.lower() or "finish" in prompt.lower():
++            next_stage = "completed"
++            updates_to_memory["finished"] = True
++
++        return AgentStateUpdate(
++            action=action,
++            next_stage=next_stage,
++            updates_to_memory=updates_to_memory
++        )
++
++    def wakeup(self, prompt: str, current_tasks: List[AgentTask]) -> None:
++        """
++        主 Agent 唤醒回调函数。
++        
++        1. 清空之前的上下文
++        2. 注入默认调度器规则、文件保存路径及上一次配置的提示词
++        3. 根据输入输出生成下一步的配置和提示词
++        4. 将生成的任务和提示词回写到调度器中
++        """
++        logger.info("Main Agent awakened.")
++        
++        # 1. 每次被唤醒时清空之前的上下文
++        self._clear_context()
++        
++        # 2. 注入默认调度器规则、文件保存路径及上一次配置的提示词
++        self._inject_rules_and_context(prompt)
++        
++        # 3. 根据输入输出生成下一步的配置和提示词
++        new_tasks = self._generate_next_tasks(prompt, current_tasks)
++        next_prompt = self._generate_next_prompt(prompt, current_tasks)
++        
++        # 4. 将生成的任务交给调度器
++        if new_tasks:
++            self.scheduler.receive_sub_agent_tasks(new_tasks)
++            
++        # 5. 设置下一次唤醒的提示词
++        self.scheduler.set_next_wakeup_prompt(next_prompt)
++        
++        # 6. 生成并调用 self.scheduler.update_workflow_state 发送状态流转指令 (AgentStateUpdate)
++        state_update = self._generate_state_update(prompt, current_tasks)
++        if state_update:
++            self.scheduler.update_workflow_state(state_update)
++        
++        logger.info("Main Agent sleep.")
++
+diff --git a/models.py b/models.py
+new file mode 100644
+index 0000000..d02083c
+--- /dev/null
++++ b/models.py
+@@ -0,0 +1,82 @@
++from dataclasses import dataclass, field
++from enum import Enum
++from typing import Dict, Any, Optional
++import datetime
++import uuid
++
++class TaskStatus(str, Enum):
++    PENDING = "pending"
++    RUNNING = "running"
++    COMPLETED = "completed"
++    FAILED = "failed"
++    CANCELLED = "cancelled"
++
++class SchedulerStatus(str, Enum):
++    IDLE = "idle"
++    RUNNING = "running"
++    PAUSED = "paused"
++    STOPPED = "stopped"
++
++@dataclass
++class SchedulerConfig:
++    """
++    Configuration settings for the Agent Scheduler.
++    """
++    max_concurrent_tasks: int = 5
++    poll_interval_seconds: int = 10
++    retry_limit: int = 3
++    timeout_seconds: Optional[int] = None
++    extra_options: Dict[str, Any] = field(default_factory=dict)
++
++@dataclass
++class SchedulerState:
++    """
++    Tracks the current state and metrics of the Agent Scheduler.
++    """
++    status: SchedulerStatus = SchedulerStatus.IDLE
++    active_tasks: int = 0
++    queued_tasks: int = 0
++    completed_tasks: int = 0
++    failed_tasks: int = 0
++    last_update: datetime.datetime = field(default_factory=lambda: datetime.datetime.now(datetime.timezone.utc))
++
++@dataclass
++class AgentTask:
++    """
++    Represents an actionable task for an Agent.
++    """
++    task_id: str = field(default_factory=lambda: str(uuid.uuid4()))
++    name: str = "Unnamed Task"
++    description: Optional[str] = None
++    status: TaskStatus = TaskStatus.PENDING
++    
++    # Timestamps
++    created_at: datetime.datetime = field(default_factory=lambda: datetime.datetime.now(datetime.timezone.utc))
++    started_at: Optional[datetime.datetime] = None
++    completed_at: Optional[datetime.datetime] = None
++    
++    # Execution Details
++    retry_count: int = 0
++    payload: Dict[str, Any] = field(default_factory=dict)
++    result: Optional[Any] = None
++    error: Optional[str] = None
++
++from pydantic import BaseModel, Field
++from typing import List
++
++class WorkflowState(BaseModel):
++    """
++    Tracks the state of a Workflow.
++    """
++    current_stage: str = Field(default="init", description="The current stage of the workflow")
++    completed_stages: List[str] = Field(default_factory=list, description="List of completed stages")
++    shared_memory: Dict[str, Any] = Field(default_factory=dict, description="Shared memory for the workflow")
++
++class AgentStateUpdate(BaseModel):
++    """
++    Represents an update request from the main Agent to modify the workflow state.
++    """
++    action: str = Field(..., description="The action performed or requested by the agent")
++    next_stage: Optional[str] = Field(None, description="The next stage to transition to, if any")
++    updates_to_memory: Dict[str, Any] = Field(default_factory=dict, description="Updates to apply to the shared memory")
++
+diff --git a/requirements.txt b/requirements.txt
+new file mode 100644
+index 0000000..c1a201d
+--- /dev/null
++++ b/requirements.txt
+@@ -0,0 +1 @@
++PyYAML>=6.0
+diff --git a/sample_workflow.yaml b/sample_workflow.yaml
+new file mode 100644
+index 0000000..22b94c4
+--- /dev/null
++++ b/sample_workflow.yaml
+@@ -0,0 +1,32 @@
++name: "ArticleWritingSkill"
++description: "A workflow for writing an article."
++version: "1.0"
++phases:
++  plan:
++    description: "Plan the article structure based on the topic."
++    next_phases:
++      - draft
++    required_memory:
++      - topic
++      - outline
++  
++  draft:
++    description: "Write the first draft of the article."
++    next_phases:
++      - review
++    required_memory:
++      - draft_content
++  
++  review:
++    description: "Review and refine the draft."
++    next_phases:
++      - publish
++      - draft
++    required_memory:
++      - feedback
++  
++  publish:
++    description: "Publish the final article."
++    next_phases: []
++    required_memory:
++      - final_content
+diff --git a/scheduler.py b/scheduler.py
+new file mode 100644
+index 0000000..74f0d35
+--- /dev/null
++++ b/scheduler.py
+@@ -0,0 +1,141 @@
++import logging
++from typing import List, Optional, Callable, Dict, Any
++from models import AgentTask, SchedulerConfig, SchedulerState, SchedulerStatus, TaskStatus, WorkflowState, AgentStateUpdate
++
++logger = logging.getLogger(__name__)
++
++class SchedulerEngine:
++    """
++    核心调度器引擎
++    """
++    def __init__(self, workflow_validator: Optional[Any] = None):
++        self.config_registry: Dict[str, SchedulerConfig] = {}
++        self.default_config: Optional[SchedulerConfig] = None
++        self.state = SchedulerState()
++        self.sub_agent_tasks: List[AgentTask] = []
++        self.next_wakeup_prompt: Optional[str] = None
++        self._is_running = False
++        
++        self.workflow_state = WorkflowState()
++        self.workflow_validator = workflow_validator
++
++    def register_config(self, name: str, config: SchedulerConfig, set_as_default: bool = False):
++        """
++        提供配置注册表功能
++        """
++        self.config_registry[name] = config
++        if set_as_default or self.default_config is None:
++            self.default_config = config
++        logger.info(f"Registered configuration '{name}'.")
++
++    def get_config(self, name: Optional[str] = None) -> SchedulerConfig:
++        """
++        获取配置，如果没有指定名称，则返回默认配置
++        """
++        if name and name in self.config_registry:
++            return self.config_registry[name]
++        if self.default_config:
++            return self.default_config
++        return SchedulerConfig() # return a new default if none registered
++
++    def receive_sub_agent_tasks(self, tasks: List[AgentTask]):
++        """
++        接收并存储主 Agent 生成的子 Agent 配置 (AgentTask)
++        """
++        self.sub_agent_tasks.extend(tasks)
++        self.state.queued_tasks += len([t for t in tasks if t.status == TaskStatus.PENDING])
++        logger.info(f"Received {len(tasks)} sub-agent tasks. Total queued: {self.state.queued_tasks}")
++
++    def set_next_wakeup_prompt(self, prompt: str):
++        """
++        接收并存储下一次主 Agent 唤醒的提示词
++        """
++        self.next_wakeup_prompt = prompt
++        logger.info("Set next wakeup prompt for main Agent.")
++
++    def trigger_main_agent_wakeup(self, wakeup_callback: Callable[[str, List[AgentTask]], None]):
++        """
++        实现主 Agent 的唤醒触发机制
++        """
++        if not self._is_running:
++            logger.warning("Scheduler is not running, cannot trigger wakeup.")
++            return False
++
++        if not self.next_wakeup_prompt:
++            logger.warning("No wakeup prompt set, cannot trigger main Agent.")
++            return False
++
++        logger.info("Triggering main Agent wakeup.")
++        try:
++            # 传递提示词和当前的子 Agent 任务列表给主 Agent
++            current_prompt = self.next_wakeup_prompt
++            # 唤醒前，清理当前提示词，以便主 Agent 设置下一次提示词
++            self.next_wakeup_prompt = None
++            wakeup_callback(current_prompt, self.sub_agent_tasks)
++            return True
++        except Exception as e:
++            logger.error(f"Error occurred during main Agent wakeup: {e}")
++            return False
++
++    def start(self):
++        """
++        启动调度器
++        """
++        if self._is_running:
++            logger.warning("Scheduler is already running.")
++            return
++        
++        self._is_running = True
++        self.state.status = SchedulerStatus.RUNNING
++        logger.info("Scheduler started.")
++
++    def stop(self):
++        """
++        实现退出逻辑
++        """
++        if not self._is_running:
++            logger.warning("Scheduler is not running.")
++            return
++
++        self._is_running = False
++        self.state.status = SchedulerStatus.STOPPED
++        logger.info("Scheduler stopped.")
++
++    @property
++    def is_running(self) -> bool:
++        return self._is_running
++
++    def update_workflow_state(self, update_request: AgentStateUpdate):
++        """
++        处理主 Agent 提交的状态更新。
++        首先使用 Validator 进行合法性校验，通过后更新托管的 WorkflowState。
++        """
++        if self.workflow_validator:
++            import workflow_validator as wv
++            # Validator 需要目标阶段。如果未提供 next_stage，我们将其视作停留在当前阶段
++            target_phase = update_request.next_stage or self.workflow_state.current_stage
++            
++            val_state = wv.WorkflowState(
++                current_phase=self.workflow_state.current_stage,
++                memory=self.workflow_state.shared_memory
++            )
++            val_update = wv.AgentStateUpdate(
++                target_phase=target_phase,
++                updates_to_memory=update_request.updates_to_memory
++            )
++            
++            # 进行合法性校验，如果校验失败会抛出异常
++            self.workflow_validator.validate(val_state, val_update)
++
++        # 校验通过（或没有配置 Validator），更新托管的 WorkflowState
++        if update_request.next_stage and update_request.next_stage != self.workflow_state.current_stage:
++            # 记录 completed_stages
++            self.workflow_state.completed_stages.append(self.workflow_state.current_stage)
++            # 修改 current_stage
++            self.workflow_state.current_stage = update_request.next_stage
++            
++        # 合并 shared_memory
++        if update_request.updates_to_memory:
++            self.workflow_state.shared_memory.update(update_request.updates_to_memory)
++            
++        logger.info(f"Workflow state updated. Current stage: {self.workflow_state.current_stage}")
+diff --git a/test_integration.py b/test_integration.py
+new file mode 100644
+index 0000000..98fd52b
+--- /dev/null
++++ b/test_integration.py
+@@ -0,0 +1,191 @@
++import pytest
++import subprocess
++from unittest.mock import MagicMock, patch
++
++from scheduler import SchedulerEngine
++from main_agent import MainAgent
++from worktree_runner import WorktreeRunner
++from models import TaskStatus
++
++@patch("subprocess.run")
++def test_end_to_end_successful_flow(mock_run):
++    """
++    验证主 Agent 启动、下发任务、子 Agent 隔离执行成功的完整控制流。
++    """
++    # 1. 初始化各组件
++    scheduler = SchedulerEngine()
++    main_agent = MainAgent(scheduler, default_save_path="/workspace")
++    runner = WorktreeRunner(cwd="/workspace")
++
++    # 模拟 subprocess.run 执行成功
++    mock_result = MagicMock()
++    mock_result.stdout = "Task executed successfully."
++    mock_result.returncode = 0
++    mock_run.return_value = mock_result
++
++    # 2. 验证主 Agent 启动
++    scheduler.start()
++    assert scheduler.is_running is True
++
++    # 3. 设置下一次唤醒提示词并触发唤醒，验证下发任务
++    scheduler.set_next_wakeup_prompt("init the project")
++    success = scheduler.trigger_main_agent_wakeup(main_agent.wakeup)
++    
++    assert success is True
++    # 主 Agent 会根据提示词生成任务并放回调度器
++    assert len(scheduler.sub_agent_tasks) > 0
++    task = scheduler.sub_agent_tasks[0]
++    assert task.status == TaskStatus.PENDING
++
++    # 4. 验证子 Agent 隔离执行 (成功情况)
++    result = runner.run_task(task)
++    
++    # 验证执行结果
++    assert result is True
++    assert task.status == TaskStatus.COMPLETED
++    assert task.result == "Task executed successfully."
++    
++    # 验证命令构造正确
++    mock_run.assert_called_once()
++    called_cmd = mock_run.call_args[0][0]
++    assert called_cmd[0] == "claude"
++    assert "--worktree" in called_cmd
++
++@patch("subprocess.run")
++def test_end_to_end_failure_rollback_flow(mock_run):
++    """
++    验证子 Agent 执行失败时，触发废弃清理(失败回滚)的完整控制流。
++    """
++    # 1. 初始化各组件
++    scheduler = SchedulerEngine()
++    main_agent = MainAgent(scheduler, default_save_path="/workspace")
++    runner = WorktreeRunner(cwd="/workspace")
++
++    # 2. 验证主 Agent 启动及下发任务
++    scheduler.start()
++    scheduler.set_next_wakeup_prompt("analyze the code with errors")
++    scheduler.trigger_main_agent_wakeup(main_agent.wakeup)
++    
++    assert len(scheduler.sub_agent_tasks) > 0
++    task = scheduler.sub_agent_tasks[0]
++    assert task.status == TaskStatus.PENDING
++
++    # 模拟 subprocess.run，当执行 claude 命令时失败，执行 git 恢复命令时成功
++    def mock_subprocess_run(cmd, *args, **kwargs):
++        if "claude" in cmd:
++            raise subprocess.CalledProcessError(
++                returncode=1, 
++                cmd=cmd, 
++                stderr="Execution failed due to syntax error."
++            )
++        else:
++            # 针对 git reset 和 git clean 的模拟
++            mock_proc = MagicMock()
++            mock_proc.stdout = ""
++            mock_proc.returncode = 0
++            return mock_proc
++
++    mock_run.side_effect = mock_subprocess_run
++
++    # 3. 验证子 Agent 失败回滚的完整控制流
++    result = runner.run_task(task)
++    
++    # 验证执行结果为失败，且状态被正确置为 FAILED
++    assert result is False
++    assert task.status == TaskStatus.FAILED
++    assert "Execution failed due to syntax error" in task.error
++
++    # 4. 验证是否正确执行了环境清理逻辑 (失败回滚)
++    calls = mock_run.call_args_list
++    assert len(calls) == 3, "Should call claude command, git reset, and git clean."
++    
++    # 验证具体调用顺序和命令内容
++    assert "claude" in calls[0][0][0]
++    assert calls[1][0][0] == ["git", "reset", "--hard", "HEAD"]
++    assert calls[2][0][0] == ["git", "clean", "-fd"]
++
++def test_end_to_end_workflow_validation_success():
++    """
++    验证主 Agent 提交合法状态更新，SchedulerEngine 能够正确更新 workflow_state。
++    """
++    from workflow_validator import WorkflowValidator
++    from models import AgentStateUpdate
++
++    validator = WorkflowValidator("sample_workflow.yaml")
++    scheduler = SchedulerEngine(workflow_validator=validator)
++    main_agent = MainAgent(scheduler, default_save_path="/workspace")
++    
++    # 设置初始状态为 plan
++    scheduler.workflow_state.current_stage = "plan"
++    scheduler.start()
++
++    # 模拟主 Agent 生成了合法的状态更新 (流转到 draft，必须提供 draft_content)
++    with patch.object(main_agent, '_generate_state_update') as mock_update:
++        mock_update.return_value = AgentStateUpdate(
++            action="drafting",
++            next_stage="draft",
++            updates_to_memory={"draft_content": "This is a draft."}
++        )
++        
++        # 触发主 Agent (绕过 trigger_main_agent_wakeup 以便直接抛出/捕获异常，或者验证无异常抛出)
++        main_agent.wakeup("write draft", [])
++        
++    # 验证状态已正确更新
++    assert scheduler.workflow_state.current_stage == "draft"
++    assert scheduler.workflow_state.shared_memory.get("draft_content") == "This is a draft."
++    assert "plan" in scheduler.workflow_state.completed_stages
++
++def test_end_to_end_workflow_validation_failure():
++    """
++    验证主 Agent 提交不合法的状态更新（跳转到不存在的阶段或缺少必填字段），能够抛出预期异常。
++    """
++    from workflow_validator import (
++        WorkflowValidator, 
++        MissingRequiredMemoryError, 
++        InvalidTransitionError,
++        PhaseNotFoundError
++    )
++    from models import AgentStateUpdate
++
++    validator = WorkflowValidator("sample_workflow.yaml")
++    scheduler = SchedulerEngine(workflow_validator=validator)
++    main_agent = MainAgent(scheduler, default_save_path="/workspace")
++    
++    scheduler.workflow_state.current_stage = "plan"
++    scheduler.start()
++
++    # 1. 验证缺少必填字段异常
++    with patch.object(main_agent, '_generate_state_update') as mock_update:
++        mock_update.return_value = AgentStateUpdate(
++            action="drafting",
++            next_stage="draft",
++            updates_to_memory={}  # 缺少 draft_content
++        )
++        
++        with pytest.raises(MissingRequiredMemoryError) as exc_info:
++            main_agent.wakeup("write draft", [])
++        assert "缺少必填字段" in str(exc_info.value)
++
++    # 2. 验证非法流转异常 (plan -> publish)
++    with patch.object(main_agent, '_generate_state_update') as mock_update:
++        mock_update.return_value = AgentStateUpdate(
++            action="publishing",
++            next_stage="publish",
++            updates_to_memory={"final_content": "Final!"}
++        )
++        
++        with pytest.raises(InvalidTransitionError) as exc_info:
++            main_agent.wakeup("publish article", [])
++        assert "不允许从阶段" in str(exc_info.value)
++
++    # 3. 验证跳转到不存在的阶段异常
++    with patch.object(main_agent, '_generate_state_update') as mock_update:
++        mock_update.return_value = AgentStateUpdate(
++            action="unknown_action",
++            next_stage="unknown_phase",
++            updates_to_memory={}
++        )
++        
++        with pytest.raises(PhaseNotFoundError) as exc_info:
++            main_agent.wakeup("do unknown", [])
++        assert "在工作流定义中不存在" in str(exc_info.value)
+diff --git a/test_models.py b/test_models.py
+new file mode 100644
+index 0000000..5939d87
+--- /dev/null
++++ b/test_models.py
+@@ -0,0 +1,57 @@
++import unittest
++from models import (
++    SchedulerConfig, SchedulerState, AgentTask, TaskStatus, SchedulerStatus,
++    WorkflowState, AgentStateUpdate
++)
++from pydantic import ValidationError
++
++class TestModels(unittest.TestCase):
++    def test_scheduler_config(self):
++        config = SchedulerConfig(max_concurrent_tasks=10)
++        self.assertEqual(config.max_concurrent_tasks, 10)
++        self.assertEqual(config.retry_limit, 3) # default
++
++    def test_scheduler_state(self):
++        state = SchedulerState(status=SchedulerStatus.RUNNING)
++        self.assertEqual(state.status, SchedulerStatus.RUNNING)
++        self.assertEqual(state.active_tasks, 0) # default
++
++    def test_agent_task(self):
++        task = AgentTask(name="Test Task")
++        self.assertIsNotNone(task.task_id)
++        self.assertEqual(task.status, TaskStatus.PENDING)
++        self.assertEqual(task.name, "Test Task")
++
++    def test_workflow_state(self):
++        state = WorkflowState()
++        self.assertEqual(state.current_stage, "init")
++        self.assertEqual(state.completed_stages, [])
++        self.assertEqual(state.shared_memory, {})
++
++        state.current_stage = "processing"
++        state.completed_stages.append("init")
++        state.shared_memory["key"] = "value"
++        self.assertEqual(state.current_stage, "processing")
++        self.assertIn("init", state.completed_stages)
++        self.assertEqual(state.shared_memory["key"], "value")
++
++    def test_agent_state_update(self):
++        update = AgentStateUpdate(action="process_data")
++        self.assertEqual(update.action, "process_data")
++        self.assertIsNone(update.next_stage)
++        self.assertEqual(update.updates_to_memory, {})
++
++        update_full = AgentStateUpdate(
++            action="finish",
++            next_stage="done",
++            updates_to_memory={"result": 42}
++        )
++        self.assertEqual(update_full.action, "finish")
++        self.assertEqual(update_full.next_stage, "done")
++        self.assertEqual(update_full.updates_to_memory["result"], 42)
++
++        with self.assertRaises(ValidationError):
++            AgentStateUpdate()  # Missing required 'action'
++
++if __name__ == '__main__':
++    unittest.main()
+diff --git a/test_scheduler.py b/test_scheduler.py
+new file mode 100644
+index 0000000..7d22ac8
+--- /dev/null
++++ b/test_scheduler.py
+@@ -0,0 +1,139 @@
++import unittest
++from models import AgentTask, SchedulerConfig, SchedulerStatus, TaskStatus, AgentStateUpdate
++from scheduler import SchedulerEngine
++
++class MockValidator:
++    def __init__(self, should_fail=False):
++        self.should_fail = should_fail
++        self.validated = False
++        
++    def validate(self, current_state, update):
++        self.validated = True
++        if self.should_fail:
++            raise ValueError("Validation failed")
++        return True
++
++class TestSchedulerEngine(unittest.TestCase):
++    def setUp(self):
++        self.scheduler = SchedulerEngine()
++
++    def test_config_registry(self):
++        config1 = SchedulerConfig(max_concurrent_tasks=10)
++        config2 = SchedulerConfig(max_concurrent_tasks=20)
++
++        self.scheduler.register_config("config1", config1, set_as_default=True)
++        self.scheduler.register_config("config2", config2)
++
++        self.assertEqual(self.scheduler.get_config("config1").max_concurrent_tasks, 10)
++        self.assertEqual(self.scheduler.get_config("config2").max_concurrent_tasks, 20)
++        self.assertEqual(self.scheduler.get_config().max_concurrent_tasks, 10) # default
++
++    def test_receive_sub_agent_tasks(self):
++        task1 = AgentTask(name="task1", status=TaskStatus.PENDING)
++        task2 = AgentTask(name="task2", status=TaskStatus.RUNNING)
++
++        self.scheduler.receive_sub_agent_tasks([task1, task2])
++
++        self.assertEqual(len(self.scheduler.sub_agent_tasks), 2)
++        # 只有一个 PENDING 的任务应该增加 queued_tasks 的计数
++        self.assertEqual(self.scheduler.state.queued_tasks, 1)
++
++    def test_set_next_wakeup_prompt(self):
++        prompt = "This is a wakeup prompt."
++        self.scheduler.set_next_wakeup_prompt(prompt)
++        self.assertEqual(self.scheduler.next_wakeup_prompt, prompt)
++
++    def test_trigger_main_agent_wakeup(self):
++        # 确保需要 running 才能触发
++        self.scheduler.start()
++        
++        task1 = AgentTask(name="task1")
++        self.scheduler.receive_sub_agent_tasks([task1])
++        self.scheduler.set_next_wakeup_prompt("Wakeup main agent!")
++
++        callback_called = False
++        def main_agent_callback(prompt, tasks):
++            nonlocal callback_called
++            callback_called = True
++            self.assertEqual(prompt, "Wakeup main agent!")
++            self.assertEqual(len(tasks), 1)
++            self.assertEqual(tasks[0].name, "task1")
++
++        result = self.scheduler.trigger_main_agent_wakeup(main_agent_callback)
++        self.assertTrue(result)
++        self.assertTrue(callback_called)
++        # 触发后应该清空
++        self.assertIsNone(self.scheduler.next_wakeup_prompt)
++
++    def test_trigger_wakeup_not_running(self):
++        self.scheduler.set_next_wakeup_prompt("Wakeup main agent!")
++        
++        callback_called = False
++        def main_agent_callback(prompt, tasks):
++            nonlocal callback_called
++            callback_called = True
++
++        result = self.scheduler.trigger_main_agent_wakeup(main_agent_callback)
++        self.assertFalse(result)
++        self.assertFalse(callback_called)
++
++    def test_start_stop(self):
++        self.scheduler.start()
++        self.assertTrue(self.scheduler.is_running)
++        self.assertEqual(self.scheduler.state.status, SchedulerStatus.RUNNING)
++
++        self.scheduler.stop()
++        self.assertFalse(self.scheduler.is_running)
++        self.assertEqual(self.scheduler.state.status, SchedulerStatus.STOPPED)
++
++    def test_update_workflow_state_no_validator(self):
++        update = AgentStateUpdate(
++            action="init",
++            next_stage="planning",
++            updates_to_memory={"key": "value"}
++        )
++        self.scheduler.update_workflow_state(update)
++        self.assertEqual(self.scheduler.workflow_state.current_stage, "planning")
++        self.assertEqual(self.scheduler.workflow_state.shared_memory, {"key": "value"})
++        self.assertEqual(self.scheduler.workflow_state.completed_stages, ["init"])
++
++    def test_update_workflow_state_with_validator_success(self):
++        validator = MockValidator()
++        self.scheduler.workflow_validator = validator
++        
++        update = AgentStateUpdate(
++            action="plan",
++            next_stage="coding",
++            updates_to_memory={"plan": "details"}
++        )
++        
++        self.scheduler.workflow_state.current_stage = "planning"
++        self.scheduler.update_workflow_state(update)
++        
++        self.assertTrue(validator.validated)
++        self.assertEqual(self.scheduler.workflow_state.current_stage, "coding")
++        self.assertEqual(self.scheduler.workflow_state.shared_memory, {"plan": "details"})
++        self.assertEqual(self.scheduler.workflow_state.completed_stages, ["planning"])
++
++    def test_update_workflow_state_with_validator_fail(self):
++        validator = MockValidator(should_fail=True)
++        self.scheduler.workflow_validator = validator
++        
++        update = AgentStateUpdate(
++            action="plan",
++            next_stage="coding",
++            updates_to_memory={"plan": "details"}
++        )
++        
++        self.scheduler.workflow_state.current_stage = "planning"
++        
++        with self.assertRaises(ValueError):
++            self.scheduler.update_workflow_state(update)
++            
++        # State should not be updated
++        self.assertEqual(self.scheduler.workflow_state.current_stage, "planning")
++        self.assertEqual(self.scheduler.workflow_state.shared_memory, {})
++        self.assertEqual(self.scheduler.workflow_state.completed_stages, [])
++
++if __name__ == '__main__':
++    unittest.main()
+diff --git a/test_temp.py b/test_temp.py
+new file mode 100644
+index 0000000..192a58a
+--- /dev/null
++++ b/test_temp.py
+@@ -0,0 +1,27 @@
++from scheduler import SchedulerEngine
++from main_agent import MainAgent
++from workflow_validator import WorkflowValidator, MissingRequiredMemoryError
++from models import AgentStateUpdate
++
++def test_temp():
++    validator = WorkflowValidator("sample_workflow.yaml")
++    scheduler = SchedulerEngine(workflow_validator=validator)
++    main_agent = MainAgent(scheduler, default_save_path="/workspace")
++    
++    scheduler.workflow_state.current_stage = "plan"
++    scheduler.start()
++    
++    import unittest.mock as mock
++    with mock.patch.object(main_agent, '_generate_state_update') as mock_update:
++        mock_update.return_value = AgentStateUpdate(
++            action="plan_finished",
++            next_stage="draft",
++            updates_to_memory={"topic": "AI"}
++        )
++        try:
++            main_agent.wakeup("start planning", [])
++            print("No exception thrown")
++        except MissingRequiredMemoryError as e:
++            print("Caught expected exception:", e)
++
++test_temp()
+diff --git a/test_workflow_validator.py b/test_workflow_validator.py
+new file mode 100644
+index 0000000..bc1b560
+--- /dev/null
++++ b/test_workflow_validator.py
+@@ -0,0 +1,60 @@
++import unittest
++from workflow_validator import (
++    WorkflowValidator,
++    WorkflowState,
++    AgentStateUpdate,
++    PhaseNotFoundError,
++    InvalidTransitionError,
++    MissingRequiredMemoryError
++)
++
++class TestWorkflowValidator(unittest.TestCase):
++    def setUp(self):
++        # 使用我们刚创建的 sample_workflow.yaml
++        self.validator = WorkflowValidator('sample_workflow.yaml')
++
++    def test_valid_transition(self):
++        """测试合法的状态流转和参数"""
++        state = WorkflowState(current_phase="plan", memory={"topic": "AI Trends"})
++        update = AgentStateUpdate(target_phase="draft", updates_to_memory={"draft_content": "This is a draft."})
++        
++        # 不应抛出异常
++        self.assertTrue(self.validator.validate(state, update))
++
++    def test_invalid_target_phase(self):
++        """测试目标阶段不存在的情况"""
++        state = WorkflowState(current_phase="plan", memory={"topic": "AI Trends"})
++        update = AgentStateUpdate(target_phase="unknown_phase", updates_to_memory={})
++        
++        with self.assertRaises(PhaseNotFoundError):
++            self.validator.validate(state, update)
++
++    def test_invalid_transition(self):
++        """测试非法的阶段流转"""
++        # 从 plan 直接跳到 review 是不允许的，因为 plan 的 next_phases 只有 draft
++        state = WorkflowState(current_phase="plan", memory={"topic": "AI Trends"})
++        update = AgentStateUpdate(target_phase="review", updates_to_memory={"feedback": "Good"})
++        
++        with self.assertRaises(InvalidTransitionError):
++            self.validator.validate(state, update)
++
++    def test_missing_required_memory(self):
++        """测试缺少必填字段的情况"""
++        state = WorkflowState(current_phase="plan", memory={"topic": "AI Trends"})
++        # draft 阶段要求 draft_content，但这里没提供
++        update = AgentStateUpdate(target_phase="draft", updates_to_memory={})
++        
++        with self.assertRaises(MissingRequiredMemoryError):
++            self.validator.validate(state, update)
++
++    def test_required_memory_in_current_state(self):
++        """测试必填字段已存在于当前状态内存中的情况"""
++        # publish 要求 final_content
++        state = WorkflowState(current_phase="review", memory={"final_content": "Final Article..."})
++        update = AgentStateUpdate(target_phase="publish", updates_to_memory={})
++        
++        # 由于 final_content 已经在 state.memory 中，校验应该通过
++        self.assertTrue(self.validator.validate(state, update))
++
++if __name__ == '__main__':
++    unittest.main()
+diff --git a/test_worktree_runner.py b/test_worktree_runner.py
+new file mode 100644
+index 0000000..4fcc4f4
+--- /dev/null
++++ b/test_worktree_runner.py
+@@ -0,0 +1,103 @@
++import unittest
++from unittest.mock import patch, MagicMock
++import subprocess
++import datetime
++from models import AgentTask, TaskStatus
++from worktree_runner import WorktreeRunner
++
++class TestWorktreeRunner(unittest.TestCase):
++
++    def setUp(self):
++        self.runner = WorktreeRunner(cwd="/fake/cwd")
++
++    def test_build_command(self):
++        task = AgentTask(description="Fix the bug")
++        cmd = self.runner.build_command(task)
++        self.assertEqual(cmd, ["claude", "--worktree", "--prompt", "Fix the bug"])
++        
++        task.payload = {"prompt": "Implement a new feature"}
++        cmd = self.runner.build_command(task)
++        self.assertEqual(cmd, ["claude", "--worktree", "--prompt", "Implement a new feature"])
++        
++        task.description = None
++        task.payload = {}
++        cmd = self.runner.build_command(task)
++        self.assertEqual(cmd, ["claude", "--worktree"])
++
++    @patch("subprocess.run")
++    def test_run_task_success(self, mock_run):
++        mock_result = MagicMock()
++        mock_result.stdout = "Success output"
++        mock_run.return_value = mock_result
++        
++        task = AgentTask(description="Fix the bug")
++        
++        success = self.runner.run_task(task)
++        
++        self.assertTrue(success)
++        self.assertEqual(task.status, TaskStatus.COMPLETED)
++        self.assertEqual(task.result, "Success output")
++        self.assertIsNone(task.error)
++        self.assertIsNotNone(task.started_at)
++        self.assertIsNotNone(task.completed_at)
++        
++        mock_run.assert_called_once_with(
++            ["claude", "--worktree", "--prompt", "Fix the bug"],
++            cwd="/fake/cwd",
++            capture_output=True,
++            text=True,
++            timeout=3600,
++            check=True
++        )
++
++    @patch("subprocess.run")
++    @patch.object(WorktreeRunner, "_cleanup_environment")
++    def test_run_task_timeout(self, mock_cleanup, mock_run):
++        mock_run.side_effect = subprocess.TimeoutExpired(cmd="claude", timeout=3600, output="Partial output")
++        
++        task = AgentTask(description="Time consuming task")
++        
++        success = self.runner.run_task(task)
++        
++        self.assertFalse(success)
++        self.assertEqual(task.status, TaskStatus.FAILED)
++        self.assertIn("timed out", task.error)
++        mock_cleanup.assert_called_once()
++
++    @patch("subprocess.run")
++    @patch.object(WorktreeRunner, "_cleanup_environment")
++    def test_run_task_called_process_error(self, mock_cleanup, mock_run):
++        mock_run.side_effect = subprocess.CalledProcessError(returncode=1, cmd="claude", stderr="Syntax error")
++        
++        task = AgentTask(description="Failing task")
++        
++        success = self.runner.run_task(task)
++        
++        self.assertFalse(success)
++        self.assertEqual(task.status, TaskStatus.FAILED)
++        self.assertIn("failed with exit code", task.error)
++        mock_cleanup.assert_called_once()
++
++    @patch("subprocess.run")
++    def test_cleanup_environment(self, mock_run):
++        self.runner._cleanup_environment()
++        
++        # Should call git reset and git clean
++        self.assertEqual(mock_run.call_count, 2)
++        mock_run.assert_any_call(
++            ["git", "reset", "--hard", "HEAD"],
++            cwd="/fake/cwd",
++            capture_output=True,
++            text=True,
++            check=True
++        )
++        mock_run.assert_any_call(
++            ["git", "clean", "-fd"],
++            cwd="/fake/cwd",
++            capture_output=True,
++            text=True,
++            check=True
++        )
++
++if __name__ == '__main__':
++    unittest.main()
+diff --git a/workflow_validator.py b/workflow_validator.py
+new file mode 100644
+index 0000000..70d8171
+--- /dev/null
++++ b/workflow_validator.py
+@@ -0,0 +1,101 @@
++import yaml
++from typing import Dict, Any, List, Optional
++from dataclasses import dataclass, field
++
++@dataclass
++class WorkflowState:
++    """当前工作流的状态"""
++    current_phase: str
++    memory: Dict[str, Any] = field(default_factory=dict)
++
++@dataclass
++class AgentStateUpdate:
++    """Agent 提交的状态更新"""
++    target_phase: str
++    updates_to_memory: Dict[str, Any] = field(default_factory=dict)
++
++class WorkflowValidatorError(Exception):
++    """工作流校验异常基类"""
++    pass
++
++class PhaseNotFoundError(WorkflowValidatorError):
++    """阶段未找到异常"""
++    pass
++
++class MissingRequiredMemoryError(WorkflowValidatorError):
++    """缺少必填字段异常"""
++    pass
++
++class InvalidTransitionError(WorkflowValidatorError):
++    """非法流转异常"""
++    pass
++
++class WorkflowValidator:
++    """工作流校验器，加载 YAML 配置并校验状态更新"""
++    
++    def __init__(self, yaml_path: str):
++        self.yaml_path = yaml_path
++        self.workflow_def = self._load_yaml(yaml_path)
++        self.phases = self.workflow_def.get("phases", {})
++        
++    def _load_yaml(self, path: str) -> Dict[str, Any]:
++        """加载 YAML 配置文件"""
++        try:
++            with open(path, 'r', encoding='utf-8') as f:
++                return yaml.safe_load(f)
++        except Exception as e:
++            raise WorkflowValidatorError(f"Failed to load workflow definition from {path}: {str(e)}")
++
++    def validate(self, current_state: WorkflowState, update: AgentStateUpdate) -> bool:
++        """
++        校验状态流转是否合法。
++        
++        Args:
++            current_state: 当前工作流状态
++            update: Agent 提交的状态更新
++            
++        Returns:
++            bool: 校验通过返回 True
++            
++        Raises:
++            PhaseNotFoundError: 目标阶段在 YAML 中不存在
++            InvalidTransitionError: 当前阶段不允许流转到目标阶段
++            MissingRequiredMemoryError: updates_to_memory 中未提供必填字段
++        """
++        target_phase = update.target_phase
++        
++        # 1. 检查目标阶段是否存在于 YAML 定义中
++        if target_phase not in self.phases:
++            raise PhaseNotFoundError(f"目标阶段 '{target_phase}' 在工作流定义中不存在。")
++            
++        # 2. 检查状态流转是否合法（当前阶段 -> 目标阶段）
++        current_phase = current_state.current_phase
++        if current_phase:
++            if current_phase not in self.phases:
++                raise PhaseNotFoundError(f"当前阶段 '{current_phase}' 在工作流定义中不存在。")
++            
++            # 如果当前阶段定义了 next_phases，并且它不是空列表，则校验目标阶段是否在允许列表中
++            # （如果 next_phases 为空或未定义，这里假设允许流转，具体取决于业务逻辑。这里我们严格限制必须在列表中，除非列表为 None）
++            allowed_next_phases = self.phases[current_phase].get("next_phases")
++            if allowed_next_phases is not None and target_phase not in allowed_next_phases:
++                raise InvalidTransitionError(
++                    f"不允许从阶段 '{current_phase}' 流转到 '{target_phase}'。"
++                    f"允许的下一阶段有: {allowed_next_phases}"
++                )
++
++        # 3. 检查必填字段是否在 updates_to_memory（或当前 memory）中被提供
++        target_phase_def = self.phases[target_phase]
++        required_memory = target_phase_def.get("required_memory", [])
++        
++        missing_fields = []
++        for field_name in required_memory:
++            # 字段需要由 update 提供，或者已经存在于当前的 memory 中
++            if field_name not in update.updates_to_memory and field_name not in current_state.memory:
++                missing_fields.append(field_name)
++                
++        if missing_fields:
++            raise MissingRequiredMemoryError(
++                f"流转到阶段 '{target_phase}' 缺少必填字段: {missing_fields}"
++            )
++            
++        return True
+diff --git a/worktree_runner.py b/worktree_runner.py
+new file mode 100644
+index 0000000..cf01ba5
+--- /dev/null
++++ b/worktree_runner.py
+@@ -0,0 +1,124 @@
++import os
++import subprocess
++import logging
++import datetime
++from typing import Optional, List
++
++from models import AgentTask, TaskStatus
++
++logger = logging.getLogger(__name__)
++
++class WorktreeRunner:
++    """
++    封装命令接口，支持通过 subprocess 启动 `claude --worktree` 唤起子 Agent。
++    实现子 Agent 的执行监控、超时控制，及执行失败时的变更废弃清理（恢复环境）逻辑。
++    """
++
++    def __init__(self, cwd: Optional[str] = None):
++        """
++        :param cwd: 工作目录。如果不提供，默认为当前目录。
++        """
++        self.cwd = cwd or os.getcwd()
++
++    def build_command(self, task: AgentTask) -> List[str]:
++        """
++        构建唤起子 Agent 的命令。
++        根据需求，命令固定前缀为 `claude --worktree`。
++        可根据 task 中的 payload 提取具体的提示词或参数。
++        """
++        cmd = ["claude", "--worktree"]
++        
++        # 尝试从 payload 中提取执行参数，若无则使用 description 作为默认的 prompt
++        prompt = task.payload.get("prompt") or task.description
++        if prompt:
++            cmd.extend(["--prompt", prompt])
++            
++        return cmd
++
++    def run_task(self, task: AgentTask, timeout_seconds: int = 3600) -> bool:
++        """
++        执行子 Agent 任务。包含执行监控、超时控制和失败环境恢复。
++        
++        :param task: 任务实例
++        :param timeout_seconds: 超时时间，默认 3600 秒
++        :return: 执行是否成功
++        """
++        task.status = TaskStatus.RUNNING
++        task.started_at = datetime.datetime.now(datetime.timezone.utc)
++        cmd = self.build_command(task)
++        
++        logger.info(f"Starting sub-agent for task {task.task_id} with cmd: {' '.join(cmd)}")
++        
++        success = False
++        try:
++            result = subprocess.run(
++                cmd,
++                cwd=self.cwd,
++                capture_output=True,
++                text=True,
++                timeout=timeout_seconds,
++                check=True
++            )
++            # 执行成功
++            task.result = result.stdout
++            task.status = TaskStatus.COMPLETED
++            success = True
++            logger.info(f"Task {task.task_id} completed successfully.")
++            
++        except subprocess.TimeoutExpired as e:
++            # 超时控制
++            error_msg = f"Task {task.task_id} timed out after {timeout_seconds} seconds. Output: {e.stdout}"
++            logger.error(error_msg)
++            task.error = error_msg
++            task.status = TaskStatus.FAILED
++            self._cleanup_environment()
++            
++        except subprocess.CalledProcessError as e:
++            # 执行失败
++            error_msg = f"Task {task.task_id} failed with exit code {e.returncode}. Error: {e.stderr}"
++            logger.error(error_msg)
++            task.error = error_msg
++            task.status = TaskStatus.FAILED
++            self._cleanup_environment()
++            
++        except Exception as e:
++            # 其他异常
++            error_msg = f"Task {task.task_id} encountered an unexpected error: {str(e)}"
++            logger.error(error_msg)
++            task.error = error_msg
++            task.status = TaskStatus.FAILED
++            self._cleanup_environment()
++            
++        finally:
++            task.completed_at = datetime.datetime.now(datetime.timezone.utc)
++            
++        return success
++
++    def _cleanup_environment(self) -> None:
++        """
++        执行失败时的变更废弃清理（恢复环境）逻辑。
++        通过 git reset 和 git clean 将工作区恢复到纯净状态，以防执行环境被意外破坏。
++        """
++        logger.warning(f"Task failed. Cleaning up environment in {self.cwd}...")
++        try:
++            # 放弃所有 tracked 文件的修改
++            subprocess.run(
++                ["git", "reset", "--hard", "HEAD"],
++                cwd=self.cwd,
++                capture_output=True,
++                text=True,
++                check=True
++            )
++            # 删除所有 untracked 的文件和目录
++            subprocess.run(
++                ["git", "clean", "-fd"],
++                cwd=self.cwd,
++                capture_output=True,
++                text=True,
++                check=True
++            )
++            logger.info("Environment cleanup successful.")
++        except subprocess.CalledProcessError as e:
++            logger.error(f"Failed to cleanup environment: {e.stderr}")
++        except Exception as e:
++            logger.error(f"Unexpected error during cleanup: {str(e)}")
